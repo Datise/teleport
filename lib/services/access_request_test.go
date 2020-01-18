@@ -40,6 +40,15 @@ func (s *AccessRequestSuite) TestRequestMarshaling(c *C) {
 	req1, err := NewAccessRequest("some-user", "role-1", "role-2")
 	c.Assert(err, IsNil)
 
+	req1.UpdatePluginData(AccessRequestPluginDataUpdateParams{
+		RequestID: "some-id",
+		Plugin:    "my-plugin",
+		Set: map[string]string{
+			"spam": "eggs",
+		},
+	})
+	c.Assert(err, IsNil)
+
 	marshaled, err := GetAccessRequestMarshaler().MarshalAccessRequest(req1)
 	c.Assert(err, IsNil)
 
@@ -49,6 +58,78 @@ func (s *AccessRequestSuite) TestRequestMarshaling(c *C) {
 	if !req1.Equals(req2) {
 		c.Errorf("unexpected inequality %+v <---> %+v", req1, req2)
 	}
+}
+
+// TestPluginDataExpectations verifies the correct behavior of the `Expect` mapping.
+func (s *AccessRequestSuite) TestPluginDataExpectations(c *C) {
+	req, err := NewAccessRequest("some-user", "some-role")
+	c.Assert(err, IsNil)
+
+	err = req.UpdatePluginData(AccessRequestPluginDataUpdateParams{
+		RequestID: req.GetName(),
+		Plugin:    "my-plugin",
+		Set: map[string]string{
+			"hello": "world",
+			"spam":  "eggs",
+		},
+		Expect: map[string]string{
+			"hello": "",
+			"spam":  "",
+		},
+	})
+	c.Assert(err, IsNil)
+
+	err = req.UpdatePluginData(AccessRequestPluginDataUpdateParams{
+		RequestID: req.GetName(),
+		Plugin:    "my-plugin",
+		Set: map[string]string{
+			"should": "fail",
+		},
+		Expect: map[string]string{
+			"missing": "key",
+		},
+	})
+	c.Assert(err, NotNil)
+
+	err = req.UpdatePluginData(AccessRequestPluginDataUpdateParams{
+		RequestID: req.GetName(),
+		Plugin:    "my-plugin",
+		Set: map[string]string{
+			"should": "fail",
+		},
+		Expect: map[string]string{
+			"hello": "world",
+			"spam":  "",
+		},
+	})
+	c.Assert(err, NotNil)
+
+	err = req.UpdatePluginData(AccessRequestPluginDataUpdateParams{
+		RequestID: req.GetName(),
+		Plugin:    "my-plugin",
+		Set: map[string]string{
+			"hello": "there",
+			"spam":  "",
+		},
+		Expect: map[string]string{
+			"hello": "world",
+			"spam":  "eggs",
+		},
+	})
+	c.Assert(err, IsNil)
+
+	err = req.UpdatePluginData(AccessRequestPluginDataUpdateParams{
+		RequestID: req.GetName(),
+		Plugin:    "my-plugin",
+		Set: map[string]string{
+			"should": "succeed",
+		},
+		Expect: map[string]string{
+			"hello": "there",
+			"spam":  "",
+		},
+	})
+	c.Assert(err, IsNil)
 }
 
 // TestRequestFilterMatching verifies expected matching behavior for AccessRequestFilter.

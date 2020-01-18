@@ -146,6 +146,9 @@ type DynamicAccess interface {
 	CreateAccessRequest(ctx context.Context, req AccessRequest) error
 	// SetAccessRequestState updates the state of an existing access request.
 	SetAccessRequestState(ctx context.Context, reqID string, state RequestState) error
+	// UpdateAccessRequestPluginData allows access plugins to update their
+	// request-specific data entries.
+	UpdateAccessRequestPluginData(ctx context.Context, params AccessRequestPluginDataUpdateParams) error
 	// GetAccessRequests gets all currently active access requests.
 	GetAccessRequests(ctx context.Context, filter AccessRequestFilter) ([]AccessRequest, error)
 	// DeleteAccessRequest deletes an access request.
@@ -184,6 +187,10 @@ type AccessRequest interface {
 	// SetAccessExpiry sets the upper limit for which this request
 	// may be considered active.
 	SetAccessExpiry(time.Time)
+	// UpdatePluginData attempts to update a PluginData entry.
+	UpdatePluginData(AccessRequestPluginDataUpdateParams) error
+	// GetAllPluginData gets all PluginData associated with the request.
+	GetAllPluginData() map[string]*PluginData
 	// CheckAndSetDefaults validates the access request and
 	// supplies default values where appropriate.
 	CheckAndSetDefaults() error
@@ -330,6 +337,71 @@ func (r *AccessRequestV3) SetAccessExpiry(expiry time.Time) {
 	r.Spec.Expires = expiry
 }
 
+func (r *AccessRequestV3) UpdatePluginData(params AccessRequestPluginDataUpdateParams) error {
+	// See #3286 for a complete discussion of the design constraints at play here.
+
+	// If expectations were give, ensure that they are met before continuing
+	if params.Expect != nil {
+		if err := r.checkExpectations(params.Plugin, params.Expect); err != nil {
+			return trace.Wrap(err)
+		}
+	}
+	// Ensure that PluginData has been initialized
+	if r.Spec.PluginData == nil {
+		r.Spec.PluginData = make(map[string]*PluginData, 1)
+	}
+	// Ensure that the specific Plugin has been initialized
+	if r.Spec.PluginData[params.Plugin] == nil {
+		r.Spec.PluginData[params.Plugin] = &PluginData{
+			Data: make(map[string]string, len(params.Set)),
+		}
+	}
+	ext := r.Spec.PluginData[params.Plugin]
+	for key, val := range params.Set {
+		// Keys which are explicitly set to the empty string are
+		// treated as DELETE operations.
+		if val == "" {
+			delete(ext.Data, key)
+			continue
+		}
+		ext.Data[key] = val
+	}
+	// Its possible that this update was simply clearing all data;
+	// if that is the case, remove the entry.
+	if len(ext.Data) == 0 {
+		delete(r.Spec.PluginData, params.Plugin)
+	}
+	return nil
+}
+
+func (r *AccessRequestV3) GetAllPluginData() map[string]*PluginData {
+	return r.Spec.PluginData
+}
+
+func (r *AccessRequestV3) checkExpectations(plugin string, expect map[string]string) error {
+	var data *PluginData
+	if r.Spec.PluginData != nil {
+		data = r.Spec.PluginData[plugin]
+	}
+	if data == nil {
+		// If no data currently exists, than the only expectation that can
+		// match is one which only specifies fields which shouldn't exist.
+		for key, val := range expect {
+			if val != "" {
+				return trace.CompareFailed("expectations not met for field %q", key)
+			}
+		}
+		return nil
+	}
+	for key, val := range expect {
+		if data.Data[key] != val {
+			return trace.CompareFailed("expectations not met for field %q", key)
+
+		}
+	}
+	return nil
+}
+
 func (r *AccessRequestV3) CheckAndSetDefaults() error {
 	if err := r.Metadata.CheckAndSetDefaults(); err != nil {
 		return trace.Wrap(err)
@@ -394,7 +466,30 @@ func (s *AccessRequestSpecV3) Equals(other *AccessRequestSpecV3) bool {
 	if s.Expires != other.Expires {
 		return false
 	}
+	if len(s.PluginData) != len(other.PluginData) {
+		return false
+	}
+	for key, val := range s.PluginData {
+		if !val.Equals(other.PluginData[key]) {
+			return false
+		}
+	}
 	return s.State == other.State
+}
+
+func (d *PluginData) Equals(other *PluginData) bool {
+	if other == nil {
+		return false
+	}
+	if len(d.Data) != len(other.Data) {
+		return false
+	}
+	for key, val := range d.Data {
+		if other.Data[key] != val {
+			return false
+		}
+	}
+	return true
 }
 
 type AccessRequestMarshaler interface {
@@ -470,7 +565,8 @@ const AccessRequestSpecSchema = `{
 		},
 		"state": { "type": "integer" },
 		"created": { "type": "string" },
-		"expires": { "type": "string" }
+		"expires": { "type": "string" },
+		"plugin_data": { "type":"object" }
 	}
 }`
 

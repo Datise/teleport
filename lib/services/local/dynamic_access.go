@@ -51,33 +51,72 @@ func (s *DynamicAccessService) CreateAccessRequest(ctx context.Context, req serv
 }
 
 func (s *DynamicAccessService) SetAccessRequestState(ctx context.Context, name string, state services.RequestState) error {
-	item, err := s.Get(ctx, accessRequestKey(name))
-	if err != nil {
-		if trace.IsNotFound(err) {
-			return trace.NotFound("cannot set state of access request %q (not found)", name)
+	// Setting state is attempted multiple times in the event of concurrent writes.
+	for i := 0; i < maxCmpAttempts; i++ {
+		item, err := s.Get(ctx, accessRequestKey(name))
+		if err != nil {
+			if trace.IsNotFound(err) {
+				return trace.NotFound("cannot set state of access request %q (not found)", name)
+			}
+			return trace.Wrap(err)
 		}
-		return trace.Wrap(err)
+		req, err := itemToAccessRequest(*item)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if err := req.SetState(state); err != nil {
+			return trace.Wrap(err)
+		}
+		// approved requests should have a resource expiry which matches
+		// the underlying access expiry.
+		if state.IsApproved() {
+			req.SetExpiry(req.GetAccessExpiry())
+		}
+		newItem, err := itemFromAccessRequest(req)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if _, err := s.CompareAndSwap(ctx, *item, newItem); err != nil {
+			if trace.IsCompareFailed(err) {
+				continue
+			}
+			return trace.Wrap(err)
+		}
+		return nil
 	}
-	req, err := itemToAccessRequest(*item)
-	if err != nil {
-		return trace.Wrap(err)
+	return trace.CompareFailed("too many concurrent writes to access request %s", name)
+}
+
+func (s *DynamicAccessService) UpdateAccessRequestPluginData(ctx context.Context, params services.AccessRequestPluginDataUpdateParams) error {
+	// Update is attempted multiple times in the event of concurrent writes.
+	for i := 0; i < maxCmpAttempts; i++ {
+		item, err := s.Get(ctx, accessRequestKey(params.RequestID))
+		if err != nil {
+			if trace.IsNotFound(err) {
+				return trace.NotFound("access request %q not found", params.RequestID)
+			}
+			return trace.Wrap(err)
+		}
+		req, err := itemToAccessRequest(*item)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if err := req.UpdatePluginData(params); err != nil {
+			return trace.Wrap(err)
+		}
+		newItem, err := itemFromAccessRequest(req)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if _, err := s.CompareAndSwap(ctx, *item, newItem); err != nil {
+			if trace.IsCompareFailed(err) {
+				continue
+			}
+			return trace.Wrap(err)
+		}
+		return nil
 	}
-	if err := req.SetState(state); err != nil {
-		return trace.Wrap(err)
-	}
-	// approved requests should have a resource expiry which matches
-	// the underlying access expiry.
-	if state.IsApproved() {
-		req.SetExpiry(req.GetAccessExpiry())
-	}
-	newItem, err := itemFromAccessRequest(req)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	if _, err := s.CompareAndSwap(ctx, *item, newItem); err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
+	return trace.CompareFailed("too many concurrent writes to access request %s", params.RequestID)
 }
 
 func (s *DynamicAccessService) GetAccessRequest(ctx context.Context, name string) (services.AccessRequest, error) {
@@ -159,9 +198,15 @@ func (s *DynamicAccessService) UpsertAccessRequest(ctx context.Context, req serv
 }
 
 func itemFromAccessRequest(req services.AccessRequest) (backend.Item, error) {
+	const maxObjectSize = 1000000 // slightly less than 1mb
 	value, err := services.GetAccessRequestMarshaler().MarshalAccessRequest(req)
 	if err != nil {
 		return backend.Item{}, trace.Wrap(err)
+	}
+	// enforce explicit limit on object size in order to prevent PluginData from
+	// growing uncontrollably.
+	if len(value) > maxObjectSize {
+		return backend.Item{}, trace.BadParameter("access request size limit exceeded")
 	}
 	return backend.Item{
 		Key:     accessRequestKey(req.GetName()),
@@ -189,4 +234,5 @@ func accessRequestKey(name string) []byte {
 
 const (
 	accessRequestsPrefix = "access_requests"
+	maxCmpAttempts       = 7
 )

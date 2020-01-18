@@ -415,6 +415,27 @@ message AccessRequestSpecV3 {
     google.protobuf.Timestamp Created = 4 [(gogoproto.stdtime) = true, (gogoproto.nullable) = false, (gogoproto.jsontag) = "created,omitempty"];
     // Expires constrains the maximum lifetime of any login session for which this request is active. 
     google.protobuf.Timestamp Expires = 5 [(gogoproto.stdtime) = true, (gogoproto.nullable) = false, (gogoproto.jsontag) = "expires,omitempty"];
+    // PluginData holds extra data used by access plugins to cache request-related values.
+    map<string, PluginData> PluginData = 6 [(gogoproto.jsontag) = "plugin_data,omitempty"];
+}
+
+// PluginData wraps a mapping of arbitrary string values used by
+// access plugins to cache request-related values.
+message PluginData {
+    // Data is a mapping of arbitrary string values.
+    map<string, string> Data = 1 [(gogoproto.jsontag) = "data,omitempty"];
+}
+
+// AccessRequestPluginDataUpdateParams encodes paramers for updating an access request's PluginData field.
+message AccessRequestPluginDataUpdateParams {
+    // RequestID indicates the ID of the target request.
+    string RequestID = 1 [(gogoproto.jsontag) = "request_id"];
+    // Plugin is the name of the plugin that owns the data.
+    string Plugin = 2 [(gogoproto.jsontag) = "plugin"];
+    // Set indicates the fields which should be set by this operation.
+    map<string, string> Set = 3 [(gogoproto.jsontag) = "set,omitempty"];
+    // Expect optionally indicates the expected state of fields prior to this update.
+    map<string, string> Expect = 4 [(gogoproto.jsontag) = "expect,omitempty"];
 }
 
 // AccessRequestFilter encodes filter params for access requests.

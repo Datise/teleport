@@ -796,8 +796,9 @@ func (a *AuthWithRoles) GetAccessRequests(ctx context.Context, filter services.A
 }
 
 func (a *AuthWithRoles) CreateAccessRequest(ctx context.Context, req services.AccessRequest) error {
-	// An exception is made to allow users to create access *pending* requests for themselves.
-	if !req.GetState().IsPending() || a.currentUserAction(req.GetUser()) != nil {
+	// An excaption is made to allow users to create access requests for themselves if the
+	// request is PENDING and does not contain any extension data.
+	if !req.GetState().IsPending() || len(req.GetAllPluginData()) > 0 || a.currentUserAction(req.GetUser()) != nil {
 		if err := a.action(defaults.Namespace, services.KindAccessRequest, services.VerbCreate); err != nil {
 			return trace.Wrap(err)
 		}
@@ -815,6 +816,13 @@ func (a *AuthWithRoles) SetAccessRequestState(ctx context.Context, reqID string,
 	}
 	updateCtx := withUpdateBy(ctx, a.user.GetName())
 	return a.authServer.SetAccessRequestState(updateCtx, reqID, state)
+}
+
+func (a *AuthWithRoles) UpdateAccessRequestPluginData(ctx context.Context, params services.AccessRequestPluginDataUpdateParams) error {
+	if err := a.action(defaults.Namespace, services.KindAccessRequest, services.VerbUpdate); err != nil {
+		return trace.Wrap(err)
+	}
+	return a.authServer.UpdateAccessRequestPluginData(ctx, params)
 }
 
 // withUpdateBy creates a child context with the AccessRequestUpdateBy

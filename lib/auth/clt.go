@@ -2601,6 +2601,17 @@ func (c *Client) SetAccessRequestState(ctx context.Context, reqID string, state 
 	return nil
 }
 
+func (c *Client) UpdateAccessRequestPluginData(ctx context.Context, params services.AccessRequestPluginDataUpdateParams) error {
+	clt, err := c.grpc()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	if _, err := clt.UpdateAccessRequestPluginData(ctx, &params); err != nil {
+		return trail.FromGRPC(err)
+	}
+	return nil
+}
+
 // WebService implements features used by Web UI clients
 type WebService interface {
 	// GetWebSessionInfo checks if a web sesion is valid, returns session id in case if

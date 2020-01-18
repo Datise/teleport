@@ -246,6 +246,18 @@ func (g *GRPCServer) SetAccessRequestState(ctx context.Context, req *proto.Reque
 	return &empty.Empty{}, nil
 }
 
+func (g *GRPCServer) UpdateAccessRequestPluginData(ctx context.Context, params *services.AccessRequestPluginDataUpdateParams) (*empty.Empty, error) {
+	// TODO(fspmarshall): Add rate-limiting and plugin data size caps.
+	auth, err := g.authenticate(ctx)
+	if err != nil {
+		return nil, trail.ToGRPC(err)
+	}
+	if err := auth.AuthWithRoles.UpdateAccessRequestPluginData(ctx, *params); err != nil {
+		return nil, trail.ToGRPC(err)
+	}
+	return &empty.Empty{}, nil
+}
+
 type grpcContext struct {
 	*AuthContext
 	*AuthWithRoles
